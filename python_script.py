@@ -1,6 +1,6 @@
 """
-Naistaixi Smart Investor Hunter
-Searches broadly, SCORES the results, pushes QUALIFIED leads (>60), AND saves a CSV backup.
+Naistaixi Robust Investor Hunter
+Debug Mode: Lower thresholds and better error reporting.
 """
 
 import requests
@@ -9,18 +9,28 @@ import os
 import time
 import csv
 from datetime import datetime
-from duckduckgo_search import DDGS
+
+# Try importing the search tool (handling both old and new names)
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        print("❌ Critical Error: Could not import duckduckgo_search or ddgs.")
+        exit(1)
 
 # --- CONFIGURATION ---
+# We use broader queries to ensure we get ANY results
 TARGET_SOURCES = [
-    {"name": "Crunchbase List", "query": "top 20 SaaS pre-seed VC investors US Crunchbase"},
+    {"name": "Crunchbase List", "query": "top SaaS pre-seed VC investors US Crunchbase"},
     {"name": "AngelList",       "query": "active SaaS VCs AngelList Wellfound US"},
-    {"name": "General Search",  "query": "best B2B SaaS pre-seed investors United States contact"},
+    {"name": "General Search",  "query": "B2B SaaS pre-seed investors United States contact email"},
     {"name": "OpenVC",          "query": "OpenVC list SaaS investors US"}
 ]
 
 MAX_RESULTS_PER_SOURCE = 10 
-MIN_SCORE_TO_KEEP = 60 
+MIN_SCORE_TO_KEEP = 30  # <--- LOWERED TO 30 to ensure data flows!
 
 MONDAY_COLUMN_IDS = {
     "status_id": "color_mkyj5j54",
@@ -43,29 +53,27 @@ def calculate_smart_score(text):
     text = text.lower()
     
     # Positive Keywords
-    if "saas" in text: score += 20
-    if "b2b" in text: score += 15
-    if "software" in text: score += 10
-    if "pre-seed" in text or "early stage" in text: score += 15
-    if "venture" in text or "capital" in text: score += 10
-    
-    # Negative Keywords
-    if "private equity" in text: score -= 20
-    if "real estate" in text: score -= 30
-    if "crypto" in text: score -= 10
+    if "saas" in text: score += 10
+    if "b2b" in text: score += 10
+    if "investor" in text or "venture" in text: score += 10
+    if "pre-seed" in text: score += 10
+    if "usa" in text or "united states" in text: score += 10
     
     return min(score, 100)
 
 def get_real_investors():
     all_results = []
-    print("🚀 Starting Smart Search...")
+    print("🚀 Starting Search (Threshold: 30 pts)...")
     
     with DDGS() as ddgs:
         for source in TARGET_SOURCES:
             print(f"🔎 Searching: {source['query']}...")
             try:
-                # FIXED LINE BELOW: Closed the parentheses correctly
+                # We search for text results
                 search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
+                
+                # DEBUG PRINT: How many raw results did we get?
+                print(f"   👉 Raw results found: {len(search_results)}")
                 
                 for result in search_results:
                     title = result.get('title', 'Unknown')
@@ -74,11 +82,13 @@ def get_real_investors():
                     
                     smart_score = calculate_smart_score(body + " " + title)
                     
+                    # Log discarded items to see why we are losing them
                     if smart_score < MIN_SCORE_TO_KEEP:
+                        # print(f"      🗑️ Discarded '{title[:15]}...' (Score: {smart_score})")
                         continue 
 
                     name = title.split("-")[0].split("|")[0].strip()
-                    if len(name) > 30: name = name[:30] + "..."
+                    if len(name) > 40: name = name[:40] + "..."
                     
                     investor = {
                         "name": name,
@@ -87,12 +97,12 @@ def get_real_investors():
                         "location": "US",
                         "type": "VC",
                         "source": source['name'],
-                        "notes": f"Score: {smart_score}/100. Snippet: {body}",
+                        "notes": f"Score: {smart_score}. Snippet: {body}",
                         "email": "" 
                     }
                     all_results.append(investor)
                     
-                time.sleep(1)
+                time.sleep(2) # Increased pause to avoid blocking
                 
             except Exception as e:
                 print(f"⚠️ Error searching {source['name']}: {e}")
@@ -129,18 +139,14 @@ def push_to_monday(investor):
     try:
         response = requests.post(url, headers=headers, json={"query": query, "variables": variables})
         if response.status_code == 200 and "data" in response.json():
-            print(f"✅ Pushed (Score {investor['score']}): {investor['name']}")
+            print(f"✅ Pushed: {investor['name']}")
         else:
-            print(f"❌ Failed to Push: {investor['name']}")
+            print(f"❌ Failed to Push: {investor['name']} - {response.text}")
     except Exception as e:
         print(f"❌ Error: {e}")
 
 def save_to_csv(investors):
-    """Saves the results to a CSV file so GitHub Actions doesn't fail"""
-    if not investors:
-        print("⚠️ No investors to save to CSV.")
-        return
-
+    if not investors: return
     filename = f"investors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     try:
         keys = investors[0].keys()
@@ -150,15 +156,15 @@ def save_to_csv(investors):
             dict_writer.writerows(investors)
         print(f"💾 CSV Backup saved: {filename}")
     except Exception as e:
-        print(f"❌ Could not save CSV: {e}")
+        print(f"❌ CSV Error: {e}")
 
 if __name__ == "__main__":
     investors = get_real_investors()
-    print(f"\n📊 QUALIFIED LEADS FOUND (>60 pts): {len(investors)}")
+    print(f"\n📊 QUALIFIED LEADS FOUND: {len(investors)}")
     
     if len(investors) > 0:
         save_to_csv(investors)
         for inv in investors:
             push_to_monday(inv)
     else:
-        print("❌ No leads found. Try lowering the score threshold.")
+        print("❌ Still 0 leads? This usually means GitHub IP is being blocked by DuckDuckGo.")
