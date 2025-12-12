@@ -2,9 +2,8 @@ name: Daily Monday Search
 
 on:
   schedule:
-    # Runs at 08:00 UTC every day
     - cron: '0 8 * * *'
-  workflow_dispatch: # Allows you to run it manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   run-scraper:
@@ -25,8 +24,8 @@ jobs:
           pip install requests ddgs beautifulsoup4 duckduckgo-search
 
       - name: Run Python script
-        env: 
-          # This section passes your Secrets into the script
+        env:
+          # Make sure these match your GitHub Secrets exactly!
           MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
-          BOARD_ID: ${{ secrets.BOARD_ID }}
+          MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
         run: python python_script.py
