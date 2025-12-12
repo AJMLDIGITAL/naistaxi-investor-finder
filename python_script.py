@@ -5,75 +5,108 @@ import time
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
-# --- CONFIGURATION & VALIDATION ---
-# NOW LOOKING FOR "MONDAY_BOARD_ID"
+# --- CONFIGURATION ---
 MONDAY_API_KEY = os.environ.get("MONDAY_API_KEY", "").strip()
-BOARD_ID = os.environ.get("MONDAY_BOARD_ID", "").strip() 
-
-# 1. Validate Credentials
-if not MONDAY_API_KEY:
-    print("❌ Error: MONDAY_API_KEY is missing.")
-    exit(1)
-
-if not BOARD_ID:
-    print("❌ Error: MONDAY_BOARD_ID is missing.")
-    exit(1)
-
-if not BOARD_ID.isdigit():
-    print(f"❌ Error: MONDAY_BOARD_ID must be a number. You provided: '{BOARD_ID}'")
-    exit(1)
-
+MONDAY_BOARD_ID = os.environ.get("MONDAY_BOARD_ID", "").strip()
 API_URL = "https://api.monday.com/v2"
 
-# --- SEARCH CONFIGURATION ---
-SEARCH_QUERIES = [
-    '"monday.com" competitor features 2025',
-    'project management software trends 2025'
-]
-
-BLACKLIST_DOMAINS = ["reddit.com", "quora.com", "g2.com", "capterra.com", "youtube.com"]
-
-def search_web(query):
-    print(f"🔎 Searching for: '{query}'...")
-    clean_results = []
+# --- 1. AUTO-DETECT COLUMN IDs ---
+def get_column_ids():
+    """
+    Asks Monday.com for the secret codes (IDs) of your 'Type' and 'Location' columns.
+    """
+    print(f"🕵️  Inspecting Board {MONDAY_BOARD_ID} to find column codes...")
     
-    with DDGS() as ddgs:
-        try:
-            results = [r for r in ddgs.text(query, max_results=5)]
-        except Exception as e:
-            print(f"   ⚠️ Search Error: {e}")
-            return []
-
-    for res in results:
-        link = res.get('href', '')
-        if any(bad in link for bad in BLACKLIST_DOMAINS):
-            continue
-        clean_results.append(res)
-        if len(clean_results) >= 2: 
-            break
-            
-    return clean_results
-
-def scrape_content(url):
-    print(f"   ⬇️  Fetching: {url}")
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"}
+    query = """
+    query ($board_id: [ID!]) {
+      boards (ids: $board_id) {
+        columns {
+          id
+          title
+          type
+        }
+      }
+    }
+    """
+    
+    headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
+    data = {'query': query, 'variables': {'board_id': int(MONDAY_BOARD_ID)}}
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        response = requests.post(API_URL, json=data, headers=headers)
+        if "errors" in response.json():
+            print("❌ API Error:", response.json()['errors'][0]['message'])
+            return None, None
+
+        columns = response.json()['data']['boards'][0]['columns']
         
-        paragraphs = soup.find_all('p')
-        text_list = [p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 50]
-        full_text = " ".join(text_list)
+        # Find the specific IDs we need
+        type_col_id = "status" # default fallback
+        loc_col_id = "text"    # default fallback
         
-        return full_text[:800] + "..." if full_text else "No substantial content found."
+        for col in columns:
+            title = col['title'].lower()
+            if "type" in title:
+                type_col_id = col['id']
+                print(f"   ✅ Found 'Type' column: ID = {type_col_id} (Type: {col['type']})")
+            elif "location" in title:
+                loc_col_id = col['id']
+                print(f"   ✅ Found 'Location' column: ID = {loc_col_id} (Type: {col['type']})")
+
+        return type_col_id, loc_col_id
 
     except Exception as e:
-        return f"Scrape Error: {e}"
+        print(f"❌ Could not auto-detect columns: {e}")
+        return "status", "text"
 
-def upload_to_monday(title, url, snippet):
-    clean_snippet = snippet.replace('"', "'").replace('\n', ' ')
+# --- 2. SEARCH & SCRAPE ---
+SEARCH_QUERIES = [
+    'top seed venture capital firms Europe 2025 list',
+    'active angel investors SaaS USA 2025 contact',
+    'venture capital funds investing in AI startups 2025'
+]
+
+BLACKLIST = ["reddit.com", "quora.com", "youtube.com", "g2.com"]
+
+def search_investors():
+    print("\n🔎 Searching for Investors...")
+    results = []
+    with DDGS() as ddgs:
+        for q in SEARCH_QUERIES:
+            try:
+                # Get 3 results per query
+                hits = [r for r in ddgs.text(q, max_results=3)]
+                for hit in hits:
+                    if not any(x in hit['href'] for x in BLACKLIST):
+                        results.append(hit)
+            except:
+                pass
+    return results
+
+def get_investor_details(url, snippet):
+    """
+    Guesses the Investor Type and Location based on text keywords.
+    """
+    text = snippet.lower()
     
+    # Guess Type
+    inv_type = "VC Firm" # Default
+    if "angel" in text: inv_type = "Angel Investor"
+    elif "private equity" in text: inv_type = "Private Equity"
+    elif "accelerator" in text: inv_type = "Accelerator"
+
+    # Guess Location
+    inv_loc = "Global" # Default
+    locs = ["london", "san francisco", "new york", "berlin", "paris", "canada", "usa", "europe", "uk"]
+    for l in locs:
+        if l in text:
+            inv_loc = l.title()
+            break
+            
+    return inv_type, inv_loc
+
+# --- 3. UPLOAD ---
+def upload_item(title, url, inv_type, inv_loc, type_col_id, loc_col_id):
     query = """
     mutation ($board_id: ID!, $item_name: String!, $column_values: JSON!) {
       create_item (
@@ -86,42 +119,59 @@ def upload_to_monday(title, url, snippet):
     }
     """
     
-    column_vals = json.dumps({
-        "text": f"{url} --- {clean_snippet}"
-    })
-
-    variables = {
-        "board_id": int(BOARD_ID),
-        "item_name": title,
-        "column_values": column_vals
+    # Prepare data for columns
+    # We use "label" for status columns and simple strings for text columns
+    vals = {
+        type_col_id: {"label": inv_type}, 
+        loc_col_id: inv_loc
     }
-
+    
+    variables = {
+        "board_id": int(MONDAY_BOARD_ID),
+        "item_name": title,
+        "column_values": json.dumps(vals)
+    }
+    
     headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
     
     try:
-        r = requests.post(API_URL, json={'query': query, 'variables': variables}, headers=headers)
-        if r.status_code == 200 and "errors" not in r.json():
-            print(f"   ✅ Sent to Monday: {title}")
+        req = requests.post(API_URL, json={'query': query, 'variables': variables}, headers=headers)
+        if "data" in req.json():
+            print(f"   📤 Uploaded: {title}")
         else:
-            print(f"   ❌ Monday API Error: {r.text}")
+            print(f"   ⚠️ Upload Error for {title}: {req.text}")
     except Exception as e:
         print(f"   ❌ Connection Error: {e}")
 
+# --- MAIN ---
 def main():
-    print("--- STARTING DAILY SEARCH ---")
-    for query in SEARCH_QUERIES:
-        good_links = search_web(query)
-        for item in good_links:
-            title = item.get('title', 'No Title')
-            url = item.get('href', '')
-            content = scrape_content(url)
-            
-            if "Scrape Error" in content or len(content) < 50:
-                print(f"   ⚠️ Skipping {title} (Low quality)")
-                continue
+    if not MONDAY_API_KEY or not MONDAY_BOARD_ID:
+        print("❌ Error: Missing MONDAY_API_KEY or MONDAY_BOARD_ID in Secrets.")
+        return
 
-            upload_to_monday(title, url, content)
-            time.sleep(2)
+    # 1. Auto-detect Columns
+    type_id, loc_id = get_column_ids()
+    
+    if not type_id:
+        print("❌ Critical: Could not access board. Check your API Key.")
+        return
+
+    # 2. Search
+    items = search_investors()
+    print(f"   Found {len(items)} potential investors.")
+
+    # 3. Process & Upload
+    for item in items:
+        title = item['title']
+        url = item['href']
+        snippet = item['body']
+        
+        # Smart Guessing
+        i_type, i_loc = get_investor_details(url, snippet)
+        
+        # Upload
+        upload_item(title, url, i_type, i_loc, type_id, loc_id)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
