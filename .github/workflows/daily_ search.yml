@@ -1,45 +1,37 @@
-# When to run this workflow
+name: Monthly US SaaS VC Search
+
 on:
-  # Run every Monday at 9:00 AM UTC
   schedule:
-    - cron: '0 9 * * 1'
-  
-  # Allow manual trigger from GitHub Actions tab
-  workflow_dispatch:
+    - cron: '0 9 1 * *' # Runs monthly
+  workflow_dispatch:      # Allows manual run button
 
 jobs:
-  search:
+  run_investor_finder:
     runs-on: ubuntu-latest
-    
+
     steps:
-    # Step 1: Get the code from your repository
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    # Step 2: Set up Python
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-    
-    # Step 3: Install required Python packages
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 pandas
-    
-    # Step 4: Run the investor discovery script
-    - name: Run investor search
-      env:
-        MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
-        MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
-      run: |
-        python investor_finder.py
-    
-    # Step 5: Upload CSV backup as artifact
-    - name: Upload results
-      uses: actions/upload-artifact@v3
-      with:
-        name: investor-results
-        path: investors_*.csv
-        if-no-files-found: ignore
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x' 
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Investor Finder Script
+        env:
+          MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
+          MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
+        run: |
+          # This command must match your python file name exactly!
+          python python_script.py
+
+      - name: Upload CSV Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: investor-leads-csv
+          path: |
+            investors_*.csv
