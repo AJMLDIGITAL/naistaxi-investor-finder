@@ -1,6 +1,6 @@
 """
-Naistaixi Robust Investor Hunter
-Fixes: Syntax errors, library names, and lowering scores to ensure results.
+Naistaixi High-Precision Investor Hunter
+Optimized for ACCURACY: Filters out agencies, crypto, and real estate.
 """
 
 import requests
@@ -10,26 +10,26 @@ import time
 import csv
 from datetime import datetime
 
-# Handle the library name change (duckduckgo_search -> ddgs)
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
     try:
-        from ddgs import DDGS
+        from duckduckgo_search import DDGS
     except ImportError:
         print("❌ Critical Error: Could not import duckduckgo_search or ddgs.")
         exit(1)
 
 # --- CONFIGURATION ---
+# More specific queries to find FIRMS, not blog posts
 TARGET_SOURCES = [
-    {"name": "Crunchbase List", "query": "top SaaS pre-seed VC investors US Crunchbase"},
-    {"name": "AngelList",       "query": "active SaaS VCs AngelList Wellfound US"},
-    {"name": "General Search",  "query": "B2B SaaS pre-seed investors United States contact email"},
-    {"name": "OpenVC",          "query": "OpenVC list SaaS investors US"}
+    {"name": "Signal NFX",      "query": 'site:signal.nfx.com "SaaS" "Pre-Seed" "United States"'},
+    {"name": "OpenVC Directory","query": 'site:openvc.app "SaaS" "United States" "Standard"'},
+    {"name": "TechCrunch Lists","query": '"active pre-seed investors" SaaS "contact" 2024 2025'},
+    {"name": "VC Portfolio",    "query": 'San Francisco pre-seed VC "our portfolio" SaaS B2B'}
 ]
 
 MAX_RESULTS_PER_SOURCE = 10 
-MIN_SCORE_TO_KEEP = 30  # Low threshold to ensure data flows
+MIN_SCORE_TO_KEEP = 50  # <--- Raised to 50 for better quality
 
 MONDAY_COLUMN_IDS = {
     "status_id": "color_mkyj5j54",
@@ -47,31 +47,38 @@ MONDAY_API_KEY = os.environ.get('MONDAY_API_KEY')
 MONDAY_BOARD_ID = os.environ.get('MONDAY_BOARD_ID')
 
 def calculate_smart_score(text):
-    """Gives points based on keywords found in the description"""
+    """Gives points for SaaS/VC terms and PENALTIES for junk"""
     score = 50 
     text = text.lower()
     
-    # Positive Keywords
-    if "saas" in text: score += 10
+    # --- POSITIVE SIGNALS (Things we want) ---
+    if "saas" in text: score += 15
     if "b2b" in text: score += 10
-    if "investor" in text or "venture" in text: score += 10
-    if "pre-seed" in text: score += 10
-    if "usa" in text or "united states" in text: score += 10
+    if "portfolio" in text: score += 15     # Good sign it's a firm
+    if "ticket size" in text: score += 15   # Very good sign
+    if "partners" in text: score += 10
+    
+    # --- NEGATIVE SIGNALS (Things to remove) ---
+    if "consulting" in text: score -= 30    # Remove consultants
+    if "agency" in text: score -= 30        # Remove agencies
+    if "hiring" in text: score -= 10        # Remove job ads
+    if "real estate" in text: score -= 40   # Wrong industry
+    if "crypto" in text: score -= 20        # Wrong industry
+    if "course" in text: score -= 30        # Remove "How to pitch" courses
     
     return min(score, 100)
 
 def get_real_investors():
     all_results = []
-    print("🚀 Starting Search (Threshold: 30 pts)...")
+    print(f"🚀 Starting High-Precision Search (Min Score: {MIN_SCORE_TO_KEEP})...")
     
     with DDGS() as ddgs:
         for source in TARGET_SOURCES:
-            print(f"🔎 Searching: {source['query']}...")
+            print(f"🔎 Searching: {source['name']}...")
             try:
-                # FIXED: The syntax error was here. Now it is closed correctly.
                 search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
                 
-                print(f"   👉 Raw results found: {len(search_results)}")
+                print(f"   👉 Raw results: {len(search_results)}")
                 
                 for result in search_results:
                     title = result.get('title', 'Unknown')
@@ -163,4 +170,4 @@ if __name__ == "__main__":
         for inv in investors:
             push_to_monday(inv)
     else:
-        print("❌ 0 leads found. This might mean GitHub's IP is temporarily blocked by DuckDuckGo.")
+        print("❌ 0 leads found. This might mean we were too strict or got blocked. Try running again later.")
