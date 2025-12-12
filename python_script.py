@@ -2,14 +2,13 @@ import os
 import requests
 import json
 import time
-from ddgs import DDGS
 
 # --- CONFIGURATION ---
 MONDAY_API_KEY = os.environ.get("MONDAY_API_KEY", "").strip()
 MONDAY_BOARD_ID = os.environ.get("MONDAY_BOARD_ID", "").strip()
 API_URL = "https://api.monday.com/v2"
 
-# --- 1. THE DATABASE ---
+# --- 1. THE DATABASE (Full Data) ---
 FULL_INVESTOR_DB = [
     {
         "name": "Rosberg Ventures",
@@ -110,7 +109,7 @@ def get_board_columns():
     
     headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
     
-    # Start with None (Safest option: if we don't find it, we don't send it)
+    # Defaults: Start with None so we don't force bad data
     mapping = {
         "website": None,
         "linkedin": None,
@@ -196,10 +195,41 @@ def upload_full_row(investor, mapping):
         req = requests.post(API_URL, json={'query': query, 'variables': variables}, headers=headers)
         response = req.json()
         
-        # ERROR HANDLING FIX: Check if 'data' is actually present and not None
+        # Check if 'data' is present
         if response.get("data") and response['data'].get('create_item'):
             item_id = response['data']['create_item']['id']
             
-            # Add the Note as a bubble (This always works)
+            # Add the Note as a bubble
             note_body = f"NOTES: {investor['note']}"
-            update_query
+            update_query = """mutation ($item_id: ID!, $body: String!) { create_update (item_id: $item_id, body: $body) { id } }"""
+            requests.post(API_URL, json={'query': update_query, 'variables': {'item_id': item_id, 'body': note_body}}, headers=headers)
+            print("      ✅ Success")
+        else:
+            # If Monday rejected it, print the exact error message
+            error_msg = response.get('errors', [{'message': 'Unknown Error'}])[0]['message']
+            print(f"      ❌ Monday Rejected Upload: {error_msg}")
+            
+    except Exception as e:
+        print(f"      ❌ Python Error: {e}")
+
+def main():
+    if not MONDAY_API_KEY: 
+        print("❌ Missing API Key"); return
+
+    # 1. Get Column IDs
+    mapping = get_board_columns()
+    
+    # Check if we are missing critical columns
+    missing = [k for k, v in mapping.items() if v is None]
+    if missing:
+        print(f"   ⚠️ WARNING: Could not find columns for: {missing}")
+        print("      (Data for these columns will be skipped to prevent crashing)")
+
+    # 2. Upload Database
+    print("\n--- POPULATING DATABASE ---")
+    for inv in FULL_INVESTOR_DB:
+        upload_full_row(inv, mapping)
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
