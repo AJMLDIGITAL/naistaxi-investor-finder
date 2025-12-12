@@ -3,7 +3,7 @@ name: Monthly US SaaS VC Search
 on:
   schedule:
     - cron: '0 9 1 * *'
-  workflow_dispatch:      # <--- This enables the button!
+  workflow_dispatch:      # Enables the manual run button
 
 jobs:
   run_investor_finder:
@@ -19,7 +19,8 @@ jobs:
           python-version: '3.x' 
 
       - name: Install dependencies
-        run: pip install requests
+        # This is the fix: We install duckduckgo-search and beautifulsoup4
+        run: pip install requests duckduckgo-search beautifulsoup4
 
       - name: Run Investor Finder Script
         env:
@@ -29,7 +30,7 @@ jobs:
           python python_script.py
 
       - name: Upload CSV Artifact
-        uses: actions/upload-artifact@v4  # <--- Fixes the error
+        uses: actions/upload-artifact@v4
         with:
           name: investor-leads-csv
           path: |
