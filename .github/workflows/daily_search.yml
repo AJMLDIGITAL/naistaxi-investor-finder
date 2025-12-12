@@ -1,37 +1,32 @@
-name: Monthly US SaaS VC Search
+name: Daily Monday Search
 
 on:
   schedule:
-    - cron: '0 9 1 * *'
-  workflow_dispatch:      # <--- THIS EXACT LINE IS WHAT MAKES THE BUTTON APPEAR
+    # Runs at 08:00 UTC every day
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
 
 jobs:
-  run_investor_finder:
+  run-scraper:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.x' 
+          python-version: '3.9'
 
       - name: Install dependencies
-        # Installs the correct tools
-        run: pip install -U requests ddgs beautifulsoup4
-
-      - name: Run Investor Finder Script
-        env:
-          MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
-          MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
         run: |
-          python python_script.py
+          python -m pip install --upgrade pip
+          pip install requests ddgs beautifulsoup4 duckduckgo-search
 
-      - name: Upload CSV Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: investor-leads-csv
-          path: |
-            investors_*.csv
+      - name: Run Python script
+        env: 
+          # This section passes your Secrets into the script
+          MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
+          BOARD_ID: ${{ secrets.BOARD_ID }}
+        run: python python_script.py
