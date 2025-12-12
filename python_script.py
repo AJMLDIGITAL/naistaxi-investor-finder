@@ -64,4 +64,101 @@ def get_real_investors():
         for source in TARGET_SOURCES:
             print(f"🔎 Searching: {source['query']}...")
             try:
-                search_results = list(ddgs.text(source['query'], max_results=MAX
+                # FIXED LINE BELOW: Closed the parentheses correctly
+                search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
+                
+                for result in search_results:
+                    title = result.get('title', 'Unknown')
+                    link = result.get('href', '')
+                    body = result.get('body', '')
+                    
+                    smart_score = calculate_smart_score(body + " " + title)
+                    
+                    if smart_score < MIN_SCORE_TO_KEEP:
+                        continue 
+
+                    name = title.split("-")[0].split("|")[0].strip()
+                    if len(name) > 30: name = name[:30] + "..."
+                    
+                    investor = {
+                        "name": name,
+                        "website": link,
+                        "score": smart_score, 
+                        "location": "US",
+                        "type": "VC",
+                        "source": source['name'],
+                        "notes": f"Score: {smart_score}/100. Snippet: {body}",
+                        "email": "" 
+                    }
+                    all_results.append(investor)
+                    
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"⚠️ Error searching {source['name']}: {e}")
+                
+    return all_results
+
+def push_to_monday(investor):
+    url = "https://api.monday.com/v2"
+    headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
+    
+    column_values = {
+        MONDAY_COLUMN_IDS["status_id"]: {"label": "New Lead"},
+        MONDAY_COLUMN_IDS["type_id"]: {"label": "VC"},
+        MONDAY_COLUMN_IDS["website_id"]: {"url": investor["website"], "text": "Link"},
+        MONDAY_COLUMN_IDS["score_id"]: investor["score"],
+        MONDAY_COLUMN_IDS["source_id"]: investor["source"],
+        MONDAY_COLUMN_IDS["notes_id"]: investor["notes"]
+    }
+    
+    query = '''
+    mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
+      create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues) {
+        id
+      }
+    }
+    '''
+    
+    variables = {
+        "boardId": MONDAY_BOARD_ID, 
+        "itemName": investor["name"], 
+        "columnValues": json.dumps(column_values)
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json={"query": query, "variables": variables})
+        if response.status_code == 200 and "data" in response.json():
+            print(f"✅ Pushed (Score {investor['score']}): {investor['name']}")
+        else:
+            print(f"❌ Failed to Push: {investor['name']}")
+    except Exception as e:
+        print(f"❌ Error: {e}")
+
+def save_to_csv(investors):
+    """Saves the results to a CSV file so GitHub Actions doesn't fail"""
+    if not investors:
+        print("⚠️ No investors to save to CSV.")
+        return
+
+    filename = f"investors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    try:
+        keys = investors[0].keys()
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            dict_writer = csv.DictWriter(f, fieldnames=keys)
+            dict_writer.writeheader()
+            dict_writer.writerows(investors)
+        print(f"💾 CSV Backup saved: {filename}")
+    except Exception as e:
+        print(f"❌ Could not save CSV: {e}")
+
+if __name__ == "__main__":
+    investors = get_real_investors()
+    print(f"\n📊 QUALIFIED LEADS FOUND (>60 pts): {len(investors)}")
+    
+    if len(investors) > 0:
+        save_to_csv(investors)
+        for inv in investors:
+            push_to_monday(inv)
+    else:
+        print("❌ No leads found. Try lowering the score threshold.")
