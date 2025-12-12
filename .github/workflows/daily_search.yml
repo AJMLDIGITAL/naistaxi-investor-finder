@@ -2,8 +2,8 @@ name: Daily Monday Search
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Runs at 08:00 UTC daily
-  workflow_dispatch:    # Allows manual trigger
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   run-scraper:
@@ -21,10 +21,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests ddgs beautifulsoup4 duckduckgo-search
 
-      - name: Run Debug Script
+      - name: Run Python script
         env:
           MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
           MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
-        run: python debug_monday.py
+        # 👇 THIS LINE WAS WRONG. IT IS NOW FIXED:
+        run: python python_script.py
