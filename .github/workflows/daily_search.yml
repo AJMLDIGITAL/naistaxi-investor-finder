@@ -2,8 +2,8 @@ name: Monthly US SaaS VC Search
 
 on:
   schedule:
-    - cron: '0 9 1 * *' # Runs monthly
-  workflow_dispatch:      # Allows manual run button
+    - cron: '0 9 1 * *'
+  workflow_dispatch:      # <--- This enables the button!
 
 jobs:
   run_investor_finder:
@@ -26,12 +26,10 @@ jobs:
           MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
           MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
         run: |
-          # Confirmed: file is named python_script.py
           python python_script.py
 
       - name: Upload CSV Artifact
-        # FIXED: Updated from v3 to v4 to solve the deprecation error
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # <--- Fixes the error
         with:
           name: investor-leads-csv
           path: |
