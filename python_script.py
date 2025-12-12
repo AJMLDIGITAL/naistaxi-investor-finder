@@ -9,8 +9,7 @@ MONDAY_API_KEY = os.environ.get("MONDAY_API_KEY", "").strip()
 MONDAY_BOARD_ID = os.environ.get("MONDAY_BOARD_ID", "").strip()
 API_URL = "https://api.monday.com/v2"
 
-# --- 1. FULLY POPULATED DATABASE (No Empty Columns!) ---
-# Every investor here has Name, Type, Location, Website, LinkedIn, Source, and Score.
+# --- 1. THE DATABASE ---
 FULL_INVESTOR_DB = [
     {
         "name": "Rosberg Ventures",
@@ -104,21 +103,20 @@ FULL_INVESTOR_DB = [
     }
 ]
 
-# --- 2. AUTO-DETECT ALL COLUMN IDs ---
+# --- 2. ROBUST COLUMN DETECTION ---
 def get_board_columns():
-    print(f"🕵️  Mapping ALL columns on Board {MONDAY_BOARD_ID}...")
+    print(f"🕵️  Mapping columns on Board {MONDAY_BOARD_ID}...")
     query = """query ($board_id: [ID!]) { boards (ids: $board_id) { columns { id title type } } }"""
     
     headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
     
-    # Defaults (placeholders in case detection fails)
+    # Start with None (Safest option: if we don't find it, we don't send it)
     mapping = {
-        "website": "link",      # Default guess
-        "linkedin": "link_1",   # Default guess
-        "source": "link_2",     # Default guess
-        "score": "numbers",     # Default guess
-        "type": "status",       # Default guess
-        "location": "text"      # Default guess
+        "website": None,
+        "linkedin": None,
+        "source": None,
+        "score": None,
+        "location": None
     }
 
     try:
@@ -126,54 +124,65 @@ def get_board_columns():
         data = req.json()
         
         if "errors" in data:
-            print(f"   ⚠️ API Error: {data['errors'][0]['message']}")
+            print(f"   ⚠️ API Error reading columns: {data['errors'][0]['message']}")
             return mapping
 
         cols = data['data']['boards'][0]['columns']
         
+        print("   --- Found Columns on Board ---")
         for col in cols:
             t = col['title'].lower()
             cid = col['id']
+            ctype = col['type']
+            print(f"   found: '{col['title']}' ({ctype}) -> ID: {cid}")
             
-            # Map columns by name
+            # Map columns by fuzzy name matching
             if "website" in t: mapping["website"] = cid
             elif "linkedin" in t: mapping["linkedin"] = cid
             elif "source" in t: mapping["source"] = cid
             elif "score" in t or "rating" in t: mapping["score"] = cid
             elif "location" in t: mapping["location"] = cid
-            elif "type" in t: mapping["type"] = cid
             
-        print(f"   ✅ Column Mapping Found: {mapping}")
+        print(f"   ------------------------------")
         return mapping
 
     except Exception as e:
-        print(f"   ❌ Detection failed ({e}). Using defaults.")
+        print(f"   ❌ Detection failed: {e}")
         return mapping
 
 # --- 3. UPLOAD LOGIC ---
 def upload_full_row(investor, mapping):
-    # We combine Name | Type | Loc in the title just to be safe
+    # Combine key info into Name to ensure visibility no matter what
     item_name = f"{investor['name']} | {investor['type']} | {investor['loc']}"
     print(f"   📤 Uploading: {item_name}")
 
+    # Build the column values dictionary dynamically
+    # We only add columns that we actually found IDs for.
+    values = {}
+    
+    if mapping["website"]:
+        values[mapping["website"]] = {"url": investor["web"], "text": "Website"}
+        
+    if mapping["linkedin"]:
+        values[mapping["linkedin"]] = {"url": investor["linkedin"], "text": "LinkedIn"}
+        
+    if mapping["source"]:
+        values[mapping["source"]] = {"url": investor["source"], "text": "Source"}
+        
+    if mapping["score"]:
+        values[mapping["score"]] = str(investor["score"])
+        
+    if mapping["location"]:
+        values[mapping["location"]] = investor["loc"]
+
+    # Construct Query
     query = """
     mutation ($board_id: ID!, $item_name: String!, $column_values: JSON!) {
-      create_item (board_id: $board_id, item_name: $item_name, column_values: $column_values) { id }
+      create_item (board_id: $board_id, item_name: $item_name, column_values: $column_values) { 
+        id 
+      }
     }
     """
-    
-    # Construct the JSON for ALL columns
-    # Note: Link columns need {"url": "...", "text": "..."}
-    # Note: Number columns need a simple string/int
-    values = {
-        mapping["website"]: {"url": investor["web"], "text": "Website"},
-        mapping["linkedin"]: {"url": investor["linkedin"], "text": "LinkedIn"},
-        mapping["source"]: {"url": investor["source"], "text": "Source"},
-        mapping["score"]: str(investor["score"]),
-        mapping["location"]: investor["loc"]
-        # We skip 'type' column here to avoid the Status Dropdown error
-        # because the Type is already in the Item Name.
-    }
     
     variables = {
         "board_id": int(MONDAY_BOARD_ID), 
@@ -185,30 +194,12 @@ def upload_full_row(investor, mapping):
     
     try:
         req = requests.post(API_URL, json={'query': query, 'variables': variables}, headers=headers)
-        if "data" in req.json():
-            item_id = req.json()['data']['create_item']['id']
+        response = req.json()
+        
+        # ERROR HANDLING FIX: Check if 'data' is actually present and not None
+        if response.get("data") and response['data'].get('create_item'):
+            item_id = response['data']['create_item']['id']
             
-            # Add the Note as a bubble
+            # Add the Note as a bubble (This always works)
             note_body = f"NOTES: {investor['note']}"
-            update_query = """mutation ($item_id: ID!, $body: String!) { create_update (item_id: $item_id, body: $body) { id } }"""
-            requests.post(API_URL, json={'query': update_query, 'variables': {'item_id': item_id, 'body': note_body}}, headers=headers)
-        else:
-            print(f"   ⚠️ Error: {req.json()}")
-    except Exception as e:
-        print(f"   ❌ Connection Error: {e}")
-
-def main():
-    if not MONDAY_API_KEY: 
-        print("❌ Missing API Key"); return
-
-    # 1. Get Column IDs
-    mapping = get_board_columns()
-
-    # 2. Upload Database
-    print("\n--- POPULATING ALL COLUMNS ---")
-    for inv in FULL_INVESTOR_DB:
-        upload_full_row(inv, mapping)
-        time.sleep(1)
-
-if __name__ == "__main__":
-    main()
+            update_query
