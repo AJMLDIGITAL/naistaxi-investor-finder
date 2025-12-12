@@ -1,27 +1,24 @@
 """
-Naistaixi Multi-Source Investor Hunter
-Searches Crunchbase, AngelList, LinkedIn, and OpenVC via DuckDuckGo.
+Naistaixi Robust Investor Hunter
+Searches broadly to GUARANTEE results.
 """
 
 import requests
 import json
 import os
-import re
 import time
 from duckduckgo_search import DDGS
-from bs4 import BeautifulSoup
 
-# --- CONFIGURATION ---
-# We use "site:" commands to force the search engine to look INSIDE these databases
+# --- BROADER CONFIGURATION ---
+# We removed the strict "site:" limits to ensure we get results
 TARGET_SOURCES = [
-    {"name": "Crunchbase", "query": 'site:crunchbase.com/organization "pre-seed" "SaaS" "US" "investor"'},
-    {"name": "AngelList",  "query": 'site:wellfound.com/company "venture capital" "SaaS" "US"'},
-    {"name": "LinkedIn",   "query": 'site:linkedin.com/company "venture capital" "SaaS" "US"'},
-    {"name": "OpenVC",     "query": 'site:openvc.app "SaaS" "investor"'},
-    {"name": "FiBAN",      "query": 'site:fiban.org "investor"'}
+    {"name": "Crunchbase List", "query": "top 20 SaaS pre-seed VC investors US Crunchbase"},
+    {"name": "AngelList",       "query": "active SaaS VCs AngelList Wellfound US"},
+    {"name": "General Search",  "query": "best B2B SaaS pre-seed investors United States contact"},
+    {"name": "OpenVC",          "query": "OpenVC list SaaS investors US"}
 ]
 
-MAX_RESULTS_PER_SOURCE = 5  # 5 results from EACH source (Total ~25 leads)
+MAX_RESULTS_PER_SOURCE = 10  # Get more results per search
 
 MONDAY_COLUMN_IDS = {
     "status_id": "color_mkyj5j54",
@@ -40,38 +37,46 @@ MONDAY_BOARD_ID = os.environ.get('MONDAY_BOARD_ID')
 
 def get_real_investors():
     all_results = []
+    print("🚀 Starting Broad Search...")
     
     with DDGS() as ddgs:
         for source in TARGET_SOURCES:
-            print(f"🔎 X-Ray Searching {source['name']}...")
+            print(f"🔎 Searching: {source['query']}...")
             try:
-                # Search using the specific "site:" query
+                # We use a broad text search
                 search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
+                
+                if not search_results:
+                    print(f"   ⚠️ No results found for {source['name']}")
+                    continue
+                    
+                print(f"   ✅ Found {len(search_results)} raw results.")
                 
                 for result in search_results:
                     title = result.get('title', 'Unknown')
                     link = result.get('href', '')
                     body = result.get('body', '')
                     
-                    # CLEANUP: Remove " | Crunchbase" or " | LinkedIn" from names
-                    name = title.split("|")[0].split("-")[0].split("—")[0].strip()
+                    # Basic Cleanup
+                    name = title.split("-")[0].split("|")[0].strip()
+                    if len(name) > 30: name = name[:30] + "..." # Truncate long titles
                     
                     investor = {
                         "name": name,
                         "website": link,
-                        "score": 85,  # Higher score because these are verified DBs
+                        "score": 70, 
                         "location": "US",
                         "type": "VC",
-                        "source": f"Scraped from {source['name']}",
-                        "notes": f"Found via {source['name']}: {body}",
-                        "email": "" # We won't hunt emails on LinkedIn/CB to avoid banning
+                        "source": source['name'],
+                        "notes": f"Snippet: {body}",
+                        "email": "" 
                     }
                     all_results.append(investor)
                     
-                time.sleep(2) # Pause between sources
+                time.sleep(1) # Polite pause
                 
             except Exception as e:
-                print(f"⚠️ Could not search {source['name']}: {e}")
+                print(f"⚠️ Error searching {source['name']}: {e}")
                 
     return all_results
 
@@ -79,12 +84,12 @@ def push_to_monday(investor):
     url = "https://api.monday.com/v2"
     headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
     
+    # We add the "Source" to the name if needed to verify where it came from
     column_values = {
         MONDAY_COLUMN_IDS["status_id"]: {"label": "New Lead"},
-        MONDAY_COLUMN_IDS["type_id"]: {"label": investor["type"]},
-        MONDAY_COLUMN_IDS["website_id"]: {"url": investor["website"], "text": investor["source"]},
+        MONDAY_COLUMN_IDS["type_id"]: {"label": "VC"},
+        MONDAY_COLUMN_IDS["website_id"]: {"url": investor["website"], "text": "Link"},
         MONDAY_COLUMN_IDS["score_id"]: investor["score"],
-        MONDAY_COLUMN_IDS["location_id"]: investor["location"],
         MONDAY_COLUMN_IDS["source_id"]: investor["source"],
         MONDAY_COLUMN_IDS["notes_id"]: investor["notes"]
     }
@@ -106,14 +111,18 @@ def push_to_monday(investor):
     try:
         response = requests.post(url, headers=headers, json={"query": query, "variables": variables})
         if response.status_code == 200 and "data" in response.json():
-            print(f"✅ Added {investor['source']} Lead: {investor['name']}")
+            print(f"✅ Pushed: {investor['name']}")
         else:
-            print(f"❌ Failed: {investor['name']}")
+            print(f"❌ Failed to Push: {investor['name']} - {response.text}")
     except Exception as e:
         print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     investors = get_real_investors()
-    print(f"📊 Found {len(investors)} total leads across all sources.")
-    for inv in investors:
-        push_to_monday(inv)
+    print(f"\n📊 TOTAL LEADS FOUND: {len(investors)}")
+    
+    if len(investors) == 0:
+        print("❌ CRITICAL: No investors found via search. Check network or queries.")
+    else:
+        for inv in investors:
+            push_to_monday(inv)
