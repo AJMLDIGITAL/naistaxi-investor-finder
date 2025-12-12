@@ -1,3 +1,37 @@
-- name: Install dependencies
-        # We install 'ddgs' (the new name) and upgrade requests
+name: Monthly US SaaS VC Search
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'
+  workflow_dispatch:      # <--- THIS EXACT LINE IS WHAT MAKES THE BUTTON APPEAR
+
+jobs:
+  run_investor_finder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x' 
+
+      - name: Install dependencies
+        # Installs the correct tools
         run: pip install -U requests ddgs beautifulsoup4
+
+      - name: Run Investor Finder Script
+        env:
+          MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
+          MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
+        run: |
+          python python_script.py
+
+      - name: Upload CSV Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: investor-leads-csv
+          path: |
+            investors_*.csv
