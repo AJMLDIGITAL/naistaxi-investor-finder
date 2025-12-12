@@ -1,173 +1,138 @@
-"""
-Naistaixi High-Precision Investor Hunter
-Optimized for ACCURACY: Filters out agencies, crypto, and real estate.
-"""
-
+import os
 import requests
 import json
-import os
 import time
-import csv
-from datetime import datetime
-
-try:
-    from ddgs import DDGS
-except ImportError:
-    try:
-        from duckduckgo_search import DDGS
-    except ImportError:
-        print("❌ Critical Error: Could not import duckduckgo_search or ddgs.")
-        exit(1)
+from bs4 import BeautifulSoup
+from ddgs import DDGS
 
 # --- CONFIGURATION ---
-# More specific queries to find FIRMS, not blog posts
-TARGET_SOURCES = [
-    {"name": "Signal NFX",      "query": 'site:signal.nfx.com "SaaS" "Pre-Seed" "United States"'},
-    {"name": "OpenVC Directory","query": 'site:openvc.app "SaaS" "United States" "Standard"'},
-    {"name": "TechCrunch Lists","query": '"active pre-seed investors" SaaS "contact" 2024 2025'},
-    {"name": "VC Portfolio",    "query": 'San Francisco pre-seed VC "our portfolio" SaaS B2B'}
+MONDAY_API_KEY = os.environ["MONDAY_API_KEY"]
+BOARD_ID = os.environ["BOARD_ID"]
+API_URL = "https://api.monday.com/v2"
+
+# --- SEARCH CONFIGURATION ---
+# We use more specific terms to get better results
+SEARCH_QUERIES = [
+    '"monday.com" competitor features 2025',
+    '"monday.com" vs "asana" vs "clickup" pricing',
+    'project management software trends 2025'
 ]
 
-MAX_RESULTS_PER_SOURCE = 10 
-MIN_SCORE_TO_KEEP = 50  # <--- Raised to 50 for better quality
+# Domains to skip (often low quality or paywalled)
+BLACKLIST_DOMAINS = ["reddit.com", "quora.com", "g2.com", "capterra.com", "youtube.com"]
 
-MONDAY_COLUMN_IDS = {
-    "status_id": "color_mkyj5j54",
-    "type_id": "color_mkyjzz25",
-    "website_id": "link_mkyj3m1e",
-    "linkedin_id": "link_mkyjpc2z",
-    "score_id": "numeric_mkyjx5h6",
-    "location_id": "text_mkyjfhyc",
-    "notes_id": "long_text_mkyjra9c",
-    "source_id": "text_mkyjcxqn",
-    "email_id": "email_mkyjbej4"
-}
-
-MONDAY_API_KEY = os.environ.get('MONDAY_API_KEY')
-MONDAY_BOARD_ID = os.environ.get('MONDAY_BOARD_ID')
-
-def calculate_smart_score(text):
-    """Gives points for SaaS/VC terms and PENALTIES for junk"""
-    score = 50 
-    text = text.lower()
-    
-    # --- POSITIVE SIGNALS (Things we want) ---
-    if "saas" in text: score += 15
-    if "b2b" in text: score += 10
-    if "portfolio" in text: score += 15     # Good sign it's a firm
-    if "ticket size" in text: score += 15   # Very good sign
-    if "partners" in text: score += 10
-    
-    # --- NEGATIVE SIGNALS (Things to remove) ---
-    if "consulting" in text: score -= 30    # Remove consultants
-    if "agency" in text: score -= 30        # Remove agencies
-    if "hiring" in text: score -= 10        # Remove job ads
-    if "real estate" in text: score -= 40   # Wrong industry
-    if "crypto" in text: score -= 20        # Wrong industry
-    if "course" in text: score -= 30        # Remove "How to pitch" courses
-    
-    return min(score, 100)
-
-def get_real_investors():
-    all_results = []
-    print(f"🚀 Starting High-Precision Search (Min Score: {MIN_SCORE_TO_KEEP})...")
+def search_web(query):
+    print(f"🔎 Searching for: '{query}'...")
+    clean_results = []
     
     with DDGS() as ddgs:
-        for source in TARGET_SOURCES:
-            print(f"🔎 Searching: {source['name']}...")
-            try:
-                search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
-                
-                print(f"   👉 Raw results: {len(search_results)}")
-                
-                for result in search_results:
-                    title = result.get('title', 'Unknown')
-                    link = result.get('href', '')
-                    body = result.get('body', '')
-                    
-                    smart_score = calculate_smart_score(body + " " + title)
-                    
-                    if smart_score < MIN_SCORE_TO_KEEP:
-                        continue 
+        # Fetch more results initially (10) so we can filter down to the best 3
+        results = [r for r in ddgs.text(query, max_results=10)]
 
-                    name = title.split("-")[0].split("|")[0].strip()
-                    if len(name) > 40: name = name[:40] + "..."
-                    
-                    investor = {
-                        "name": name,
-                        "website": link,
-                        "score": smart_score, 
-                        "location": "US",
-                        "type": "VC",
-                        "source": source['name'],
-                        "notes": f"Score: {smart_score}. Snippet: {body}",
-                        "email": "" 
-                    }
-                    all_results.append(investor)
-                    
-                time.sleep(2) 
-                
-            except Exception as e:
-                print(f"⚠️ Error searching {source['name']}: {e}")
-                
-    return all_results
+    for res in results:
+        link = res['href']
+        # 1. Skip if link is in blacklist
+        if any(bad_domain in link for bad_domain in BLACKLIST_DOMAINS):
+            continue
+            
+        # 2. Skip PDF files
+        if link.endswith(".pdf"):
+            continue
+            
+        clean_results.append(res)
+        if len(clean_results) >= 3: # Stop once we have 3 good links
+            break
+            
+    return clean_results
 
-def push_to_monday(investor):
-    url = "https://api.monday.com/v2"
-    headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
-    
-    column_values = {
-        MONDAY_COLUMN_IDS["status_id"]: {"label": "New Lead"},
-        MONDAY_COLUMN_IDS["type_id"]: {"label": "VC"},
-        MONDAY_COLUMN_IDS["website_id"]: {"url": investor["website"], "text": "Link"},
-        MONDAY_COLUMN_IDS["score_id"]: investor["score"],
-        MONDAY_COLUMN_IDS["source_id"]: investor["source"],
-        MONDAY_COLUMN_IDS["notes_id"]: investor["notes"]
+def scrape_content(url):
+    print(f"   ⬇️  Fetching: {url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
     
-    query = '''
-    mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
-      create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues) {
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # IMPROVEMENT: Try to find the "main" article content specifically
+        # This checks for common tag IDs used for main articles
+        article = soup.find('article') or soup.find('main') or soup.find(id='content')
+        
+        if article:
+            paragraphs = article.find_all('p')
+        else:
+            # Fallback to body if no main article tag found
+            paragraphs = soup.find('body').find_all('p')
+            
+        # Get text, filter out very short sentences (often menu items)
+        text_list = [p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 50]
+        full_text = " ".join(text_list)
+        
+        # Return a cleaner, longer snippet (800 chars)
+        return full_text[:800] + "..." if full_text else "No substantial content found."
+
+    except Exception as e:
+        return f"Scrape Error: {e}"
+
+def upload_to_monday(title, url, snippet):
+    # Ensure special characters don't break JSON
+    clean_snippet = snippet.replace('"', "'").replace('\n', ' ')
+    
+    query = """
+    mutation ($board_id: ID!, $item_name: String!, $column_values: JSON!) {
+      create_item (
+        board_id: $board_id,
+        item_name: $item_name,
+        column_values: $column_values
+      ) {
         id
       }
     }
-    '''
+    """
     
-    variables = {
-        "boardId": MONDAY_BOARD_ID, 
-        "itemName": investor["name"], 
-        "columnValues": json.dumps(column_values)
-    }
-    
-    try:
-        response = requests.post(url, headers=headers, json={"query": query, "variables": variables})
-        if response.status_code == 200 and "data" in response.json():
-            print(f"✅ Pushed: {investor['name']}")
-        else:
-            print(f"❌ Failed to Push: {investor['name']} - {response.text}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    # ADJUST THIS: Ensure "text" matches your actual Monday column ID for text/link
+    column_vals = json.dumps({
+        "text": f"{url} --- {clean_snippet}"
+    })
 
-def save_to_csv(investors):
-    if not investors: return
-    filename = f"investors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    variables = {
+        "board_id": int(BOARD_ID),
+        "item_name": title,
+        "column_values": column_vals
+    }
+
+    headers = {"Authorization": MONDAY_API_KEY, "Content-Type": "application/json"}
+    
     try:
-        keys = investors[0].keys()
-        with open(filename, 'w', newline='', encoding='utf-8') as f:
-            dict_writer = csv.DictWriter(f, fieldnames=keys)
-            dict_writer.writeheader()
-            dict_writer.writerows(investors)
-        print(f"💾 CSV Backup saved: {filename}")
+        requests.post(API_URL, json={'query': query, 'variables': variables}, headers=headers)
+        print(f"   ✅ Sent to Monday: {title}")
     except Exception as e:
-        print(f"❌ CSV Error: {e}")
+        print(f"   ❌ Monday Error: {e}")
+
+def main():
+    print("--- STARTING DAILY SEARCH ---")
+    
+    for query in SEARCH_QUERIES:
+        good_links = search_web(query)
+        
+        for item in good_links:
+            title = item['title']
+            url = item['href']
+            
+            # Scrape
+            content = scrape_content(url)
+            
+            # Skip if content is empty or failed
+            if "Scrape Error" in content or len(content) < 50:
+                print(f"   ⚠️ Skipping {title} (Low quality content)")
+                continue
+
+            # Upload
+            upload_to_monday(title, url, content)
+            
+            # Wait to avoid blocking
+            time.sleep(2)
 
 if __name__ == "__main__":
-    investors = get_real_investors()
-    print(f"\n📊 QUALIFIED LEADS FOUND: {len(investors)}")
-    
-    if len(investors) > 0:
-        save_to_csv(investors)
-        for inv in investors:
-            push_to_monday(inv)
-    else:
-        print("❌ 0 leads found. This might mean we were too strict or got blocked. Try running again later.")
+    main()
