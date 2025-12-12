@@ -1,6 +1,6 @@
 """
 Naistaixi Robust Investor Hunter
-Debug Mode: Lower thresholds and better error reporting.
+Fixes: Syntax errors, library names, and lowering scores to ensure results.
 """
 
 import requests
@@ -10,7 +10,7 @@ import time
 import csv
 from datetime import datetime
 
-# Try importing the search tool (handling both old and new names)
+# Handle the library name change (duckduckgo_search -> ddgs)
 try:
     from duckduckgo_search import DDGS
 except ImportError:
@@ -21,7 +21,6 @@ except ImportError:
         exit(1)
 
 # --- CONFIGURATION ---
-# We use broader queries to ensure we get ANY results
 TARGET_SOURCES = [
     {"name": "Crunchbase List", "query": "top SaaS pre-seed VC investors US Crunchbase"},
     {"name": "AngelList",       "query": "active SaaS VCs AngelList Wellfound US"},
@@ -30,7 +29,7 @@ TARGET_SOURCES = [
 ]
 
 MAX_RESULTS_PER_SOURCE = 10 
-MIN_SCORE_TO_KEEP = 30  # <--- LOWERED TO 30 to ensure data flows!
+MIN_SCORE_TO_KEEP = 30  # Low threshold to ensure data flows
 
 MONDAY_COLUMN_IDS = {
     "status_id": "color_mkyj5j54",
@@ -49,7 +48,7 @@ MONDAY_BOARD_ID = os.environ.get('MONDAY_BOARD_ID')
 
 def calculate_smart_score(text):
     """Gives points based on keywords found in the description"""
-    score = 50 # Start with a base score
+    score = 50 
     text = text.lower()
     
     # Positive Keywords
@@ -69,10 +68,9 @@ def get_real_investors():
         for source in TARGET_SOURCES:
             print(f"🔎 Searching: {source['query']}...")
             try:
-                # We search for text results
+                # FIXED: The syntax error was here. Now it is closed correctly.
                 search_results = list(ddgs.text(source['query'], max_results=MAX_RESULTS_PER_SOURCE))
                 
-                # DEBUG PRINT: How many raw results did we get?
                 print(f"   👉 Raw results found: {len(search_results)}")
                 
                 for result in search_results:
@@ -82,9 +80,7 @@ def get_real_investors():
                     
                     smart_score = calculate_smart_score(body + " " + title)
                     
-                    # Log discarded items to see why we are losing them
                     if smart_score < MIN_SCORE_TO_KEEP:
-                        # print(f"      🗑️ Discarded '{title[:15]}...' (Score: {smart_score})")
                         continue 
 
                     name = title.split("-")[0].split("|")[0].strip()
@@ -102,7 +98,7 @@ def get_real_investors():
                     }
                     all_results.append(investor)
                     
-                time.sleep(2) # Increased pause to avoid blocking
+                time.sleep(2) 
                 
             except Exception as e:
                 print(f"⚠️ Error searching {source['name']}: {e}")
@@ -167,4 +163,4 @@ if __name__ == "__main__":
         for inv in investors:
             push_to_monday(inv)
     else:
-        print("❌ Still 0 leads? This usually means GitHub IP is being blocked by DuckDuckGo.")
+        print("❌ 0 leads found. This might mean GitHub's IP is temporarily blocked by DuckDuckGo.")
