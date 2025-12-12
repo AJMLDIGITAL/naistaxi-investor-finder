@@ -26,10 +26,11 @@ jobs:
           MONDAY_API_KEY: ${{ secrets.MONDAY_API_KEY }}
           MONDAY_BOARD_ID: ${{ secrets.MONDAY_BOARD_ID }}
         run: |
-          # This command must match your python file name exactly!
+          # Confirmed: file is named python_script.py
           python python_script.py
 
       - name: Upload CSV Artifact
+        # FIXED: Updated from v3 to v4 to solve the deprecation error
         uses: actions/upload-artifact@v4
         with:
           name: investor-leads-csv
